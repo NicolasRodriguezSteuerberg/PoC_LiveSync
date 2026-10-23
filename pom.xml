@@ -8,14 +8,18 @@
         <version>4.1.1</version>
         <relativePath/> <!-- lookup parent from repository -->
     </parent>
+
     <groupId>com.nsteuerberg</groupId>
     <artifactId>live-sync</artifactId>
     <version>0.0.1-SNAPSHOT</version>
+
     <name>live-sync</name>
     <description>live-sync</description>
 
     <packaging>pom</packaging>
+
     <modules>
+        <module>sse</module>
         <module>websocket</module>
     </modules>
 

@@ -15,10 +15,12 @@
 
     <name>live-sync</name>
     <description>live-sync</description>
+
     <packaging>pom</packaging>
 
     <modules>
         <module>sse</module>
+        <module>websocket</module>
     </modules>
 
     <properties>

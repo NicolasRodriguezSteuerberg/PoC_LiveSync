@@ -1,5 +1,7 @@
 package com.nsteuerberg.sse;
 
+import org.springframework.data.redis.annotation.RedisListener;
+import org.springframework.data.redis.messaging.RedisMessageSendingTemplate;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -13,6 +15,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class Controller {
     private final List<SseEmitter> emitters = new CopyOnWriteArrayList<>();
     private AtomicInteger counter = new AtomicInteger(0);
+    private final RedisMessageSendingTemplate redisMessageSendingTemplate;
+
+    public Controller(RedisMessageSendingTemplate redisMessageSendingTemplate) {
+        this.redisMessageSendingTemplate = redisMessageSendingTemplate;
+    }
 
     @GetMapping()
     public SseEmitter subscribe() {
@@ -28,8 +35,13 @@ public class Controller {
     @PatchMapping
     public String increment() {
         int value = counter.incrementAndGet();
-        publish(value);
+        redisMessageSendingTemplate.convertAndSend("counter", value);
         return "Incrementado con éxito";
+    }
+
+    @RedisListener("counter")
+    public void onRedisIncrement(int value) {
+        publish(value);
     }
 
     private void publish(int counterValue) {

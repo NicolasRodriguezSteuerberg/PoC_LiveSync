@@ -1,31 +1,58 @@
 # PoC - Actualización de datos en tiempo real
-En esta prueba se utilizan diferentes medios de comunicación para notificar al cliente en tiempo real.
 
-- `SSE` (Server-Sent Events): Comunicación unidireccional.
-- `WS` (WebSockets): Comunicación bidireccional.
-- `Redis PUB/SUB` como intermediario entre instancias.
+## Descripción
+Esta prueba de concepto (PoC) explora diferentes mecanismos de comunicación para
+enviar actualizaciones en tiempo real a los clientes, utilizando Spring Boot
 
-## Objetivo
-Comprobar que las actualizaciones llegan en tiempo real a los clientes con las diferentes tecnologías.
+Se estudian tres tecnologías:
+
+- `SSE` (Server-Sent Events): Comunicación unidireccional del servidor al cliente.
+- `WebSocket + STOMP`: Comunicación bidireccional mediante conexiones persistentes
+y mensajería estructurada
+- `Redis Pub/Sub`: distribución de mensajes entre distintas instancias de la aplicación.
+
+## Objetivos
+- Implementar y comparar diferentes mecanismos de comunicación en tiempo real.
+- Comprobar cómo reciben los clientes las actualizaciones del servidor.
+- Distribuir los mensajes entre varias instancias de Spring Boot mediante Redis Pub/Sub.
+- Verificar que un cliente conectado a una instancia recibe las actualizaciones 
+generadas en otra.
+
+## Arquitectura
+La PoC utiliza dos niveles de comunicación:
+1. **Comunicación con los clientes**: SSE o WebSocket, según la implementación.
+2. **Comunicación entre instancias**: Redis Pub/Sub permite distribuir mensajes
+entre las instancias de Spring Boot.
+
+## Comparativa de Tecnologías
+| Tecnología      | Comunicación                              | Uso en la PoC                                          |
+|-----------------|-------------------------------------------|--------------------------------------------------------|
+| *SSE*           | Servidor -> Cliente                       | Enviar actualizaciones mediante HTTP.                  |
+| *WS + STOPM*    | Bidireccional                             | Recibir peticiones y enviar mensajes.                  |
+| *Redis Pub/Sub* | Publicación/Suscripción entre componentes | Distribuir mensajes entre instancias de la aplicación. |
+
+Redis Pub/Sub no sustituye a SSE ni a WebSocket. En esta prueba se utiliza como mecanismo
+complementario para distribuir las actualizaciones entre instancias.
 
 ## SSE (Server-Sent Events)
 **SSE** es un protocolo de comunicación unidireccional que permite al servidor enviar actualizaciones
-a un cliente en tiempo real. Mantiene una conexión HTTP abierta y persistente para trasmitir datos
-de forma continua.
+a un cliente en tiempo real. Mantiene una conexión HTTP abierta y persistente para trasmitir eventos.
 
-### Estructura de datos
+### Estructura de eventos
+Los mensajes SSE siguen una estructura basada en campos de texto:
+
 ```text
 event: messageText
 id: 12345
 data: data
 ```
 
-- *event* (Opcional): El nombre del evento, permite que el cliente escuche eventos específicos
+- *event* (Opcional): Nombre del evento, permite al cliente escuchar tipos de eventos específicos.
 - *id* (Opcional): Identificador del evento
-- *data*: Texto con el contenido del evento
+- *data*: Contenido del evento. Puede ser texto o JSON serializado.
 
 ### Configuración
-Utiliza la dependencia de `SpringWeb` para funcionar
+Utiliza la dependencia de `spring-boot-starter-web.
 <details>
 <summary>pom.xml</summary>
 
@@ -39,20 +66,21 @@ Utiliza la dependencia de `SpringWeb` para funcionar
 </details>
 
 <details>
-<summary>Conexión SSE</summary>
+<summary>Establecer una conexión SSE</summary>
 
 ```java
 @GetMapping()
 public SseEmitter subscribe() {
     // Configuramos cuanto tiempo queremos que se mantenga abierta la conexión
     SseEmitter emitter = new SseEmitter(Long.MAX_VALUE);
-    // Guardamos el emitter para poder enviarle mensajes
+    
+    // Guardamos la conexión para enviarle actualizaciones
     emitters.add(emitter);
     
-    // Que hacer cuando termine la conexión
+    // Liberamos los recursos cuando termina la conexión
     emitter.onCompletion(() -> emitters.remove(emitter));
-    // Que hacer cuando termine el timeout
     emitter.onTimeout(() -> emitters.remove(emitter));
+    emitter.onError(error -> emitters.remove(emitter));
 
     return emitter;
 }
@@ -61,7 +89,7 @@ public SseEmitter subscribe() {
 </details>
 
 <details>
-<summary>Enviar Evento</summary>
+<summary>Enviar eventos</summary>
 
 ```java
 private void publish(int counterValue) {
@@ -97,13 +125,11 @@ private void publish(int counterValue) {
 servidor y al cliente comunicarse en tiempo real. Mantiene una conexión
 abierta y persistente para transmitir datos de forma continua.
 
-En esta prueba de concepto se está utilizando WebSocket con STOMP, lo que nos permite
-tener un sistema de mensajería estructurado (Pub/Sub) y enrutar mensajes directamente
-a nuestros controladores.
+En esta PoC se está utilizando WebSocket junto a STOMP, un protocolo de mensajería
+que permite organizar las comunicaciones mediante destinos, suscripciones y mensajes.
 
-### Estructura de datos
-En este protocolo utilizamos dos estructuras, una para recibir y otra para
-enviar. Estos datos se envían en texto convertible a JSON.
+### Estructura de los mensajes
+Se utilizan dos estructuras JSON: una para las peticiones y otra para las actualizaciones.
 
 #### Request
 ```json
@@ -128,10 +154,9 @@ enviar. Estos datos se envían en texto convertible a JSON.
 - *timestamp*: Fecha de la última actualización de contador.
 
 ### Configuración
-Utiliza la dependencia de `Spring Websocket` para funcionar.
+Utiliza la dependencia de `spring-boot-starter-websocket`.
 
 <details>
-
 <summary>pom.xml</summary>
 
 ```xml
@@ -143,25 +168,24 @@ Utiliza la dependencia de `Spring Websocket` para funcionar.
 </details>
 
 <details>
-
 <summary>Configuración Websocket</summary>
 
-Habilitar Websocket y configurar
 ```java
 @Configuration
 @EnableWebSocketMessageBroker
 public class WebsocketConfig implements WebSocketMessageBrokerConfigurer {
     @Override
     public void configureMessageBroker(MessageBrokerRegistry registry) {
-        // configurar el prefijo predeterminado donde publicar los mensajes
+        // Destinos de salida para los clientes suscritos
         registry.enableSimpleBroker("/topic");
-        // configurar el prefijo predetirminado donde recibir los mensajes
+        
+        // Prefijo de los mensajes dirigidos a la aplicación
         registry.setApplicationDestinationPrefixes("/app");
     }
 
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
-        // Configuración de endpoints de conexión WebSocket.
+        // Endpoint de conexión WebSocket
         registry.addEndpoint("/test-ws");
     }
 }
@@ -172,39 +196,57 @@ public class WebsocketConfig implements WebSocketMessageBrokerConfigurer {
 <details>
 <summary>Recibir Mensajes</summary>
 
-Solo se puede recibir mensajes a través de un @Controller
+Los mensajes dirigidos a la aplicación se procesan mediante métodos anotados
+con @MessageMapping.
 ```java
-// Topico donde se reciben los mensajes
 @MessageMapping("/sendMessage")
 public void onMessage(Request request) {
     doSomething(request);
 }
 ```
+Con el prefijo /app configurado anteriormente, el cliente envía el mensaje a 
+/app/sendMessage
+
 </details>
 
 <details>
 <summary>Enviar mensajes</summary>
-Si solo se va a responder desde donde llega el mensaje se puede utilizar la
-anotación `@SendTo("/topic/messages")` y devolver en la función lo que se
-quiera enviar. Esto se haría en el propio método donde se recibe el mensaje
+Existen os alternativas principales para publicar mensajes en los destinos STOMP.
+
+<details>
+<summary>Opción 1: utilizar @SendTo</summary>
+
+Si el mensaje se genera como respuesta al procesamiento de una petición,
+se puede utilizar @SendTo.
 
 ```java
 @MessageMapping("/sendMessage")
 @SendTo("/topic/messages")
 public Tablero sendMessage(Request request) {
-    int count = counter.addAndGet(request.value());
+    int count = counter.addAndGet(
+        request.increment()
+            ? request.value()
+            : -request.value()
+    );
 
     // se manda solo gracias al SendTo
     return new Tablero(
         count,
-        "Incrementado",
+        "Actualizado",
         System.currentTimeMillis()
     );
 }
 ```
+El valor devuelto se envía automáticamente a `/topic/messages`.
 
-Si queremos poder enviarlo desde otros lados (por si se puede modificar por
-eventos o peticiones HTTP) tenemos que usar el template de `SimpMessagingTemplate`.
+</details>
+
+<details>
+<summary>Opción 2: Utilizar SimpMessagingTemplate</summary>
+
+Cuando se necesita enviar mensajes desde distintos componentes, por ejemplo un
+servicio, una petición HTTP o un listener de Redis, se puede utilizar
+`SimpMessagingTemplate`.
 
 ```java
 // Spring se encarga de inyectarlo
@@ -218,20 +260,26 @@ public WebsocketController(SimpMessagingTemplate messagingTemplate) {
 // Ejemplo de envío
 private void sendMsg(Long count) {
     messagingTemplate.convertAndSend(
-            "/topic/messages",
-            new Tablero(
-                    count,
-                    "Incrementado",
-                    System.currentTimeMillis()
-            )
+        "/topic/messages",
+        new Tablero(
+            count,
+            "Actualizado",
+            System.currentTimeMillis()
+        )
     );
 }
 ```
 
 </details>
 
+
+</details>
+
+### Eventos de conexión y desconexión
+Spring permite detectar eventos relacionados con las sesiones WebSocket.
+
 <details>
-<summary>Reaccionar a clientes conectados/desconectados</summary>
+<summary>Listener de eventos WebSocket</summary>
 
 ```java
 @Component
@@ -250,3 +298,167 @@ public class WebSocketEventListener {
 ```
 
 </details>
+
+
+## Redis Pub/Sub
+**Redis** es un sistema de mensajería basado en el modelo publicación/suscripción.
+Los publicadores envían mensajes a canales y Redis los distribuye a los suscriptores
+que estén escuchando esos canales.
+
+En esta PoC se utiliza para distribuir mensajes entre distintas instancias de Spring Boot.
+Cuando una instancia publica una actualización en Redis, las instancias suscritas
+pueden recibirla y reenviarla a sus clientes mediante WebSocket.
+
+### Flujo de comunicación
+1. Un cliente envía una peticion a una instancia de Spring Boot.
+2. La instancia procesa la petición y publica la actualización en el canal Redis `counter`.
+3. Redis distribuye el mensaje a las instanias suscritas al canal.
+4. Cada listener recibe la actualización y la reenvia a sus clientes mediante `WS` o `SSE`.
+
+### Estructura de mensajes
+Las actualizaciones utilizan la estructura Tablero:
+```json
+{
+  "counter": 12,
+  "message": "Contenido de mensaje",
+  "timestamp": 12354545
+}
+```
+
+El objeto se publica en Redis y se convierte al formato configurado para la aplicación.
+
+### Configuración
+Se utiliza `spring-boot-starter-data-redis`.
+
+<details>
+<summary>pom.xml</summary>
+
+```xml
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-data-redis</artifactId>
+</dependency>
+```
+
+</details>
+
+<details>
+<summary>application.yml</summary>
+
+```yaml
+spring:
+  redis:
+    host: localhost
+    port: 6379
+```
+
+</details>
+
+<details>
+<summary>Configurar el listener de Redis</summary>
+
+```java
+@Configuration
+@EnableRedisListeners
+public class RedisConfig {
+    // Configuración adicional
+}
+```
+
+</details>
+
+<details>
+<summary>Recibir mensajes</summary>
+
+```java
+@RedisListener(topic = "counter")
+public void onCounterMsg(Tablero tablero) {
+    doSomething(tablero);
+}
+```
+
+
+</details>
+
+<details>
+<summary>Publicar mensajes</summary>
+
+Se utiliza `RedisMessageSendigTemplate` para publicar objetos sin tener que convertirlos
+manualmente a cadenas.
+```java
+@Configuration
+@EnableRedisListeners
+public class RedisConfig {
+
+    @Bean
+    public RedisMessageSendingTemplate redisMessageSendingTemplate(RedisConnectionFactory connectionFactory) {
+        RedisTemplate<String, Object> redisTemplate = new RedisTemplate<>();
+        redisTemplate.setConnectionFactory(connectionFactory);
+        redisTemplate.afterPropertiesSet();
+
+        return new RedisMessageSendingTemplate(redisTemplate);
+    }
+}
+```
+
+Ejemplo de publicación:
+```java
+@Service
+public class RedisPublisher {
+    private final RedisMessageSendingTemplate redisTemplate;
+    
+    // Dejamos que redis se encargue de inyectarlo
+    public RedisPublisher(RedisMessageSendingTemplate redisTemplate) {
+        this.redisTemplate = redisTemplate;
+    }
+
+    public void publish(int count) {
+        redisTemplate.convertAndSend(
+                "counter",
+                new Tablero(
+                        count,
+                        "incrementado",
+                        System.currentTimeMillis()
+                ),
+                Map.of(MessageHeaders.CONTENT_TYPE, "application/json")
+        );
+    }
+}
+```
+
+</details>
+
+## Ejecución y pruebas
+### Requisitos
+- Java
+- Maven
+- Docker / instancia de Redis
+
+### Prueba con varias instancias
+1. Arrancar Redis 
+```shell
+docker compose up -d
+```
+2. Iniciar la aplicación WS/SSE en un puerto, ejemplo 8080.
+3. Iniciar una segunda instancia en otro puerto, ejemplo 8081.
+4. Conectarse a cada instancia (WS tiene pagina web integrada http://localhost:8080, para SSE
+habría que crear pagina web o conectarse por Postman).
+5. Enviar una petición (para SSE utilizar POST http://localhost:8080).
+6. Comprobar que la actualización llega a los clientes de ambas instancias.
+
+### Resultado esperado
+Cuando una instancia publica una actualización en Redis, el listener de cada instancia
+suscrita recibe el mensaje y lo reenvía a los clientes conectados a ella.
+
+Esto permite comprobar la distribución de actualizaciones entre distintas instancias
+de Spring Boot.
+
+## Conclusiones
+Esta prueba de concepto permite explorar distintos mecanismos de comunicación en
+tiempo real y sus responsabilidades:
+
+- SSE simplifica el envío de actualizaciones unidireccionales.
+- WebSocket con STOMP permite intercambiar mensajes bidireccionales y organizar
+las suscripciones de los clientes.
+- Redis Pub/Sub permite distribuir eventos entre instancias, complementando los
+mecanismos de comunicación con los clientes.

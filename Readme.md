@@ -80,7 +80,7 @@ public SseEmitter subscribe() {
     // Liberamos los recursos cuando termina la conexión
     emitter.onCompletion(() -> emitters.remove(emitter));
     emitter.onTimeout(() -> emitters.remove(emitter));
-    emitter.onError(error -> emitters.remove(emitter))
+    emitter.onError(error -> emitters.remove(emitter));
 
     return emitter;
 }
